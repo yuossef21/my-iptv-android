@@ -1,5 +1,10 @@
 {
   "appId": "com.yuossef.iptv",
   "appName": "IPTV App",
-  "webDir": "www"
+  "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
 }
