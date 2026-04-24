@@ -2,6 +2,10 @@
   "appId": "com.yuossef.iptv",
   "appName": "IPTV App",
   "webDir": "www",
+  "server": {
+    "cleartext": true,
+    "androidScheme": "http"
+  },
   "plugins": {
     "CapacitorHttp": {
       "enabled": true
