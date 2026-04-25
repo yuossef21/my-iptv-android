@@ -188,6 +188,7 @@ document.getElementById('logout-btn').addEventListener('click', () => {
 
 // ===== الأقسام =====
 document.querySelectorAll('.dash-card').forEach(card => {
+    card.setAttribute('tabindex', '0');
     card.addEventListener('click', async () => {
         currentType = card.dataset.type;
         dom.contentTitle.textContent = card.querySelector('h3').textContent;
@@ -214,6 +215,7 @@ function renderCategories(cats) {
     cats.forEach((cat, i) => {
         const div = document.createElement('div');
         div.className = 'category-item';
+        div.setAttribute('tabindex', '0');
         div.textContent = cat.category_name;
         div.onclick = () => {
             document.querySelectorAll('.category-item').forEach(el => el.classList.remove('active'));
@@ -238,6 +240,7 @@ function renderStreamsList(arr, isNew = false) {
     arr.slice(displayedCount, displayedCount + CHUNK_SIZE).forEach(s => {
         const card = document.createElement('div');
         card.className = 'stream-card';
+        card.setAttribute('tabindex', '0');
         const icon = s.stream_icon || s.cover || FALLBACK_IMAGE;
         const name = s.name || s.title;
         const id = s.stream_id || s.series_id;
@@ -250,6 +253,10 @@ function renderStreamsList(arr, isNew = false) {
     displayedCount = Math.min(displayedCount, arr.length + CHUNK_SIZE);
     // fix counter
     displayedCount = Math.min(arr.length, displayedCount);
+
+    if (isNew && arr.length > 0) {
+        setTimeout(() => dom.streamsList.querySelector('.stream-card')?.focus(), 100);
+    }
 
     if (displayedCount < arr.length) {
         const s = Object.assign(document.createElement('div'), { style: 'height:20px;grid-column:1/-1' });
@@ -289,9 +296,10 @@ async function openSeriesModal(sid, stitle) {
         Object.keys(d.episodes).forEach((n, i) => {
             const btn = document.createElement('button');
             btn.className = 'season-btn'; btn.textContent = `موسم ${n}`;
+            btn.setAttribute('tabindex', '0');
             btn.onclick = () => { document.querySelectorAll('.season-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); renderEpisodes(d.episodes[n]); };
             sc.appendChild(btn);
-            if (i === 0) btn.click();
+            if (i === 0) { btn.click(); setTimeout(() => btn.focus(), 100); }
         });
     } catch { sc.innerHTML = '<span style="color:red">فشل جلب تفاصيل المسلسل</span>'; }
 }
@@ -302,6 +310,7 @@ function renderEpisodes(eps) {
     eps.forEach((ep, index) => {
         const card = document.createElement('div');
         card.className = 'episode-card';
+        card.setAttribute('tabindex', '0');
         const title = ep.title || `حلقة ${ep.episode_num}`;
         card.innerHTML = `<h4>${title}</h4><p style="font-size:.8rem;color:#888">${ep.info?.duration || ''}</p>`;
         card.onclick = () => { 
@@ -661,6 +670,27 @@ document.addEventListener('fullscreenchange', () => {
             window.Capacitor.Plugins.StatusBar.hide().catch(e => console.warn(e));
         } else {
             window.Capacitor.Plugins.StatusBar.show().catch(e => console.warn(e));
+        }
+    }
+});
+
+// ===== دعم الريموت كنترول (TV Remote) =====
+document.addEventListener('keydown', (e) => {
+    // دعم زر OK / Enter للتحديد
+    if (e.key === 'Enter' || e.keyCode === 13) {
+        const active = document.activeElement;
+        // إذا كان العنصر المحدد قابل للضغط وليس مربع نص
+        if (active && active.tagName !== 'INPUT' && typeof active.click === 'function') {
+            active.click();
+            e.preventDefault();
+        }
+    }
+    // دعم زر OK للتشغيل والإيقاف أثناء عرض الفيديو
+    if ((e.key === 'Enter' || e.keyCode === 13) && dom.playerScreen.classList.contains('active')) {
+        const video = document.getElementById('main-video');
+        if (video) {
+            if (video.paused) video.play();
+            else video.pause();
         }
     }
 });
