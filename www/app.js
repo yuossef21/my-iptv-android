@@ -92,9 +92,12 @@ const dom = {
     contentTitle: document.getElementById('content-title'),
     playerTitle: document.getElementById('player-title'),
     engineSelect: document.getElementById('engine-select'),
+    historyToggle: document.getElementById('history-toggle'),
 };
 
 // ===== إقلاع =====
+let watchHistory = JSON.parse(localStorage.getItem('iptv_history')) || {};
+
 document.addEventListener('DOMContentLoaded', async () => {
     await CodecSupport.detect();
     buildEngineOptions();
@@ -114,6 +117,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(() => {
         document.querySelector('.dash-card.movies')?.click();
     }, 500);
+
+    // برمجة زر الرجوع للأندرويد
+    if (window.Capacitor && window.Capacitor.Plugins.App) {
+        window.Capacitor.Plugins.App.addListener('backButton', () => {
+            if (document.fullscreenElement) {
+                document.exitFullscreen().catch(()=>{});
+            } else if (dom.playerScreen.classList.contains('active')) {
+                document.getElementById('close-player-btn').click();
+            } else if (dom.seriesModal.classList.contains('active')) {
+                document.getElementById('close-modal-btn').click();
+            } else if (dom.contentView.style.display !== 'none') {
+                document.getElementById('back-to-dash-btn').click();
+            } else if (dom.dashScreen.classList.contains('active') || dom.loginScreen.classList.contains('active')) {
+                window.Capacitor.Plugins.App.exitApp();
+            }
+        });
+    }
 });
 
 function buildEngineOptions() {
@@ -352,6 +372,28 @@ function triggerPlayer() {
         }
     };
     video.addEventListener('ended', onEnded);
+
+    // حفظ سجل المشاهدة واستئنافه
+    let lastSave = 0;
+    video.addEventListener('timeupdate', () => {
+        if (!dom.historyToggle?.checked || !window._currentPlayerInfo?.streamId || isLive) return;
+        const now = Date.now();
+        if (now - lastSave > 5000 && video.currentTime > 5) {
+            watchHistory[window._currentPlayerInfo.streamId] = video.currentTime;
+            localStorage.setItem('iptv_history', JSON.stringify(watchHistory));
+            lastSave = now;
+        }
+    });
+
+    video.addEventListener('canplay', () => {
+        if (dom.historyToggle?.checked && window._currentPlayerInfo?.streamId && !isLive) {
+            const savedTime = watchHistory[window._currentPlayerInfo.streamId];
+            if (savedTime > 10 && video.currentTime < 5) {
+                video.currentTime = savedTime;
+                showNotification('تم استئناف المشاهدة من حيث توقفت ⏱️');
+            }
+        }
+    }, { once: true });
 
     if (engine === 'videojs') playWithVideoJS(video, url, isHLS, isMKV, isTS);
     else if (engine === 'direct') playDirectVideo(video, url);
