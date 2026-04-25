@@ -98,6 +98,16 @@ const dom = {
 // ===== إقلاع =====
 let watchHistory = JSON.parse(localStorage.getItem('iptv_history')) || {};
 
+function isAdultContent(text) {
+    if (!text) return false;
+    const t = text.toLowerCase();
+    return t.includes('18+') || t.includes('+18') || t.includes('xxx') || t.includes('adult') || t.includes('porn') || t.includes('للكبار');
+}
+
+dom.familyToggle?.addEventListener('change', () => {
+    if (currentType) document.querySelector(`.dash-card.${currentType}`)?.click();
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
     await CodecSupport.detect();
     buildEngineOptions();
@@ -211,6 +221,11 @@ function renderCategories(cats) {
     dom.categoriesList.innerHTML = '';
     const wrap = document.createElement('div');
     dom.categoriesList.appendChild(wrap);
+    
+    if (dom.familyToggle?.checked) {
+        cats = cats?.filter(cat => !isAdultContent(cat.category_name)) || [];
+    }
+
     if (!cats?.length) return wrap.innerHTML = '<div class="category-item">لا توجد أقسام</div>';
     cats.forEach((cat, i) => {
         const div = document.createElement('div');
@@ -230,7 +245,14 @@ function renderCategories(cats) {
 
 async function loadStreams(catId) {
     dom.streamsList.innerHTML = '<h3 style="grid-column:1/-1;text-align:center;">جاري التحميل...</h3>';
-    try { allCurrentStreams = await api.getStreams(currentType, catId) || []; renderStreamsList(allCurrentStreams, true); }
+    try { 
+        let streams = await api.getStreams(currentType, catId) || []; 
+        if (dom.familyToggle?.checked) {
+            streams = streams.filter(s => !isAdultContent(s.name) && !isAdultContent(s.title));
+        }
+        allCurrentStreams = streams;
+        renderStreamsList(allCurrentStreams, true); 
+    }
     catch { dom.streamsList.innerHTML = '<h3 style="color:red;grid-column:1/-1;text-align:center;">خطأ بالتحميل</h3>'; }
 }
 
@@ -276,7 +298,11 @@ dom.searchInput.addEventListener('input', e => {
         dom.streamsList.innerHTML = '<h3 style="grid-column:1/-1;text-align:center;">جاري البحث...</h3>';
         try {
             if (!globalStreamsCache[currentType]) globalStreamsCache[currentType] = await api.getAllStreams(currentType);
-            renderStreamsList((globalStreamsCache[currentType] || []).filter(s => (s.name || s.title || '').toLowerCase().includes(term)), true);
+            let filtered = (globalStreamsCache[currentType] || []).filter(s => (s.name || s.title || '').toLowerCase().includes(term));
+            if (dom.familyToggle?.checked) {
+                filtered = filtered.filter(s => !isAdultContent(s.name) && !isAdultContent(s.title));
+            }
+            renderStreamsList(filtered, true);
             document.querySelectorAll('.category-item').forEach(el => el.classList.remove('active'));
         } catch { dom.streamsList.innerHTML = '<h3 style="color:red;grid-column:1/-1;text-align:center;">فشل البحث</h3>'; }
     }, 500);
