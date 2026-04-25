@@ -611,3 +611,14 @@ function showScreen(el) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     el?.classList.add('active');
 }
+
+// ===== إخفاء شريط الإشعارات في وضع ملء الشاشة (للأندرويد) =====
+document.addEventListener('fullscreenchange', () => {
+    if (window.Capacitor && window.Capacitor.Plugins.StatusBar) {
+        if (document.fullscreenElement) {
+            window.Capacitor.Plugins.StatusBar.hide().catch(e => console.warn(e));
+        } else {
+            window.Capacitor.Plugins.StatusBar.show().catch(e => console.warn(e));
+        }
+    }
+});
