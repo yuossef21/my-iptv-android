@@ -30,41 +30,41 @@ const CodecSupport = {
     }
 };
 
-// ===== إعدادات HLS – أقصى استفادة من الإنترنت =====
+// ===== إعدادات HLS – أقصى قوة وسرعة رهيبة =====
 function getHlsConfig(isLive) {
     return {
-        // ===== Buffer أقصى درجة =====
-        maxBufferLength: isLive ? 60 : 120,
-        maxMaxBufferLength: isLive ? 120 : 600,
-        maxBufferSize: 256 * 1024 * 1024,   // 256 MB RAM
-        maxBufferHole: 0.1,
-        highBufferWatchdogPeriod: 3,
-        nudgeMaxRetry: 10,
+        // ===== Buffer أقصى درجة لسرعة رهيبة =====
+        maxBufferLength: isLive ? 60 : 300,
+        maxMaxBufferLength: isLive ? 120 : 1200,
+        maxBufferSize: 512 * 1024 * 1024,   // 512 MB RAM
+        maxBufferHole: 0.5,
+        highBufferWatchdogPeriod: 2,
+        nudgeMaxRetry: 20,
 
-        // ===== ABR – دائماً أعلى جودة =====
+        // ===== ABR – دائماً أعلى جودة وسرعة استجابة =====
         startLevel: -1,
-        abrEwmaDefaultEstimate: 60 * 1024 * 1024,    // 60 Mbps
-        abrBandWidthFactor: 0.95,
-        abrBandWidthUpFactor: 0.90,
+        abrEwmaDefaultEstimate: 100 * 1024 * 1024,    // 100 Mbps
+        abrBandWidthFactor: 0.99,
+        abrBandWidthUpFactor: 0.95,
         abrMaxWithRealBitrate: true,
 
-        // ===== أداء =====
+        // ===== أداء قوي جداً =====
         enableWorker: true,
         progressive: true,
         lowLatencyMode: isLive,
-        backBufferLength: isLive ? 30 : 120,
-        maxFragLookUpTolerance: 0.1,
+        backBufferLength: isLive ? 30 : 90,
+        maxFragLookUpTolerance: 0.2,
 
-        // ===== Retry محسّن =====
-        manifestLoadingTimeOut: 10000,
-        manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 300,
-        levelLoadingTimeOut: 10000,
-        levelLoadingMaxRetry: 10,
-        levelLoadingRetryDelay: 300,
-        fragLoadingTimeOut: 25000,
-        fragLoadingMaxRetry: 10,
-        fragLoadingRetryDelay: 300,
+        // ===== Retry عنيف جداً لتعويض انقطاع السيرفر =====
+        manifestLoadingTimeOut: 15000,
+        manifestLoadingMaxRetry: 15,
+        manifestLoadingRetryDelay: 200,
+        levelLoadingTimeOut: 15000,
+        levelLoadingMaxRetry: 15,
+        levelLoadingRetryDelay: 200,
+        fragLoadingTimeOut: 30000,
+        fragLoadingMaxRetry: 20,
+        fragLoadingRetryDelay: 200,
 
         // ===== CORS =====
         xhrSetup(xhr) { xhr.withCredentials = false; },
@@ -117,8 +117,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     const autoUser = "23441138792";
     const autoPass = "76943549847";
     
-    localStorage.setItem('iptv_session', JSON.stringify({ url: autoUrl, username: autoUser, password: autoPass }));
     api = new XtreamAPI();
+    try {
+        const d = await api.authenticate(autoUrl, autoUser, autoPass);
+        if (d.user_info) {
+            const max = parseInt(d.user_info.max_connections) || 0;
+            const active = parseInt(d.user_info.active_cons) || 0;
+            if (max > 0 && active >= max) {
+                setTimeout(() => {
+                    alert(`⚠️ تحذير: لقد وصلت للحد الأقصى للأجهزة المتصلة (${active}/${max}).\nالسيرفر قد يمنع البث! يرجى إغلاق التطبيق من أجهزتك الأخرى فوراً ليعمل التطبيق بثبات.`);
+                }, 1000);
+            }
+        }
+    } catch(e) {}
+    
+    localStorage.setItem('iptv_session', JSON.stringify({ url: autoUrl, username: autoUser, password: autoPass }));
     
     showScreen(dom.dashScreen);
     dom.displayUser.textContent = `مرحباً بك في PRO IPTV`;
@@ -467,8 +480,9 @@ function playWithHlsJS(video, url, isLive) {
         if (bw > 0) updateBandwidthDisplay(bw);
     });
 
+    // ===== Auto-Reconnect المخفي السريع =====
     let errCnt = 0, mediaErrCnt = 0;
-    hlsInstance.on(Hls.Events.ERROR, (_, d) => {
+    const errorHandler = (_, d) => {
         if (!d.fatal) {
             if (d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
                 d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL) {
@@ -476,17 +490,40 @@ function playWithHlsJS(video, url, isLive) {
             }
             return;
         }
-        errCnt++;
+        
         if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            setTimeout(() => hlsInstance?.startLoad(), Math.min(errCnt * 500, 4000));
+            console.warn("السيرفر قطع الاتصال! جاري إعادة الاتصال السريع المخفي...");
+            const currentTime = video.currentTime;
+            
+            // إعادة بناء المشغل في الخلفية في أجزاء من الثانية
+            setTimeout(() => {
+                if(!dom.playerScreen.classList.contains('active')) return;
+                if(hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+                
+                hlsInstance = new Hls(getHlsConfig(isLive));
+                hlsInstance.loadSource(url);
+                hlsInstance.attachMedia(video);
+                
+                hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                    if (currentTime > 0) video.currentTime = currentTime;
+                    safePlay(video);
+                });
+                hlsInstance.on(Hls.Events.ERROR, errorHandler);
+                
+                hlsInstance.on(Hls.Events.FRAG_LOADED, () => {
+                    const bw = hlsInstance.bandwidthEstimate;
+                    if (bw > 0) updateBandwidthDisplay(bw);
+                });
+            }, 300);
         } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
             mediaErrCnt++;
             if (mediaErrCnt <= 3) { hlsInstance.recoverMediaError(); }
             else { setTimeout(() => checkAndHandleHEVC(video, url), 1500); }
         } else {
-            setTimeout(() => dom.playerScreen.classList.contains('active') && triggerPlayer(), 3000);
+            setTimeout(() => dom.playerScreen.classList.contains('active') && triggerPlayer(), 2000);
         }
-    });
+    };
+    hlsInstance.on(Hls.Events.ERROR, errorHandler);
 
     // كاشف شاشة سوداء بعد 4 ثوان
     setTimeout(() => checkAndHandleHEVC(video, url), 4000);
