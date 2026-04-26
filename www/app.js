@@ -33,45 +33,44 @@ const CodecSupport = {
 // ===== إعدادات HLS – أقصى قوة وسرعة رهيبة =====
 function getHlsConfig(isLive) {
     return {
-        // ===== Buffer أقصى درجة لسرعة رهيبة =====
-        maxBufferLength: isLive ? 60 : 300,
-        maxMaxBufferLength: isLive ? 120 : 1200,
-        maxBufferSize: 512 * 1024 * 1024,   // 512 MB RAM
+        // ===== Buffer متوازن لتجنب طرد السيرفر للبث المباشر =====
+        maxBufferLength: isLive ? 15 : 120,
+        maxMaxBufferLength: isLive ? 30 : 600,
+        maxBufferSize: 64 * 1024 * 1024,   // 64 MB RAM
         maxBufferHole: 0.5,
         highBufferWatchdogPeriod: 2,
-        nudgeMaxRetry: 20,
+        nudgeMaxRetry: 10,
 
         // ===== ABR – دائماً أعلى جودة وسرعة استجابة =====
         startLevel: -1,
-        abrEwmaDefaultEstimate: 100 * 1024 * 1024,    // 100 Mbps
-        abrBandWidthFactor: 0.99,
-        abrBandWidthUpFactor: 0.95,
+        abrEwmaDefaultEstimate: 50 * 1024 * 1024,    // 50 Mbps
+        abrBandWidthFactor: 0.95,
+        abrBandWidthUpFactor: 0.90,
         abrMaxWithRealBitrate: true,
 
         // ===== أداء قوي جداً =====
         enableWorker: true,
         progressive: true,
         lowLatencyMode: isLive,
-        backBufferLength: isLive ? 30 : 90,
+        backBufferLength: isLive ? 10 : 90,
         maxFragLookUpTolerance: 0.2,
 
+        // ===== تفادي خطأ ERR_CONTENT_LENGTH_MISMATCH =====
+        enableFetch: false, // إجبار استخدام XHR لأنه يتجاهل أخطاء الطول الوهمية من سيرفرات IPTV
+
         // ===== Retry عنيف جداً لتعويض انقطاع السيرفر =====
-        manifestLoadingTimeOut: 15000,
-        manifestLoadingMaxRetry: 15,
-        manifestLoadingRetryDelay: 200,
-        levelLoadingTimeOut: 15000,
-        levelLoadingMaxRetry: 15,
-        levelLoadingRetryDelay: 200,
-        fragLoadingTimeOut: 30000,
-        fragLoadingMaxRetry: 20,
-        fragLoadingRetryDelay: 200,
+        manifestLoadingTimeOut: 10000,
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 500,
+        levelLoadingTimeOut: 10000,
+        levelLoadingMaxRetry: 10,
+        levelLoadingRetryDelay: 500,
+        fragLoadingTimeOut: 20000,
+        fragLoadingMaxRetry: 15,
+        fragLoadingRetryDelay: 500,
 
         // ===== CORS =====
-        xhrSetup(xhr) { xhr.withCredentials = false; },
-        fetchSetup(context, initParams) {
-            initParams.credentials = 'omit';
-            return new Request(context.url, initParams);
-        }
+        xhrSetup(xhr) { xhr.withCredentials = false; }
     };
 }
 
@@ -492,29 +491,35 @@ function playWithHlsJS(video, url, isLive) {
         }
         
         if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            console.warn("السيرفر قطع الاتصال! جاري إعادة الاتصال السريع المخفي...");
-            const currentTime = video.currentTime;
-            
-            // إعادة بناء المشغل في الخلفية في أجزاء من الثانية
-            setTimeout(() => {
-                if(!dom.playerScreen.classList.contains('active')) return;
-                if(hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+            if (d.details === Hls.ErrorDetails.FRAG_LOAD_ERROR || d.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT) {
+                // خطأ في جزء من الفيديو (شائع جداً في البث المباشر)، نحاول جلبه مجدداً بدون تدمير المشغل
+                console.warn("Fragment error, retrying...");
+                hlsInstance.startLoad();
+            } else {
+                console.warn("السيرفر قطع الاتصال بشكل كامل! جاري إعادة الاتصال السريع المخفي...");
+                const currentTime = video.currentTime;
                 
-                hlsInstance = new Hls(getHlsConfig(isLive));
-                hlsInstance.loadSource(url);
-                hlsInstance.attachMedia(video);
-                
-                hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-                    if (currentTime > 0) video.currentTime = currentTime;
-                    safePlay(video);
-                });
-                hlsInstance.on(Hls.Events.ERROR, errorHandler);
-                
-                hlsInstance.on(Hls.Events.FRAG_LOADED, () => {
-                    const bw = hlsInstance.bandwidthEstimate;
-                    if (bw > 0) updateBandwidthDisplay(bw);
-                });
-            }, 300);
+                // إعادة بناء المشغل في الخلفية في أجزاء من الثانية
+                setTimeout(() => {
+                    if(!dom.playerScreen.classList.contains('active')) return;
+                    if(hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+                    
+                    hlsInstance = new Hls(getHlsConfig(isLive));
+                    hlsInstance.loadSource(url);
+                    hlsInstance.attachMedia(video);
+                    
+                    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                        if (currentTime > 0 && !isLive) video.currentTime = currentTime;
+                        safePlay(video);
+                    });
+                    hlsInstance.on(Hls.Events.ERROR, errorHandler);
+                    
+                    hlsInstance.on(Hls.Events.FRAG_LOADED, () => {
+                        const bw = hlsInstance.bandwidthEstimate;
+                        if (bw > 0) updateBandwidthDisplay(bw);
+                    });
+                }, 300);
+            }
         } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
             mediaErrCnt++;
             if (mediaErrCnt <= 3) { hlsInstance.recoverMediaError(); }
