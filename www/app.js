@@ -30,46 +30,29 @@ const CodecSupport = {
     }
 };
 
-// ===== إعدادات HLS – أقصى قوة وسرعة رهيبة =====
+// ===== إعدادات HLS مستقرة وآمنة =====
 function getHlsConfig(isLive) {
     return {
-        // ===== Buffer متوازن لتجنب طرد السيرفر للبث المباشر =====
-        maxBufferLength: isLive ? 15 : 120,
-        maxMaxBufferLength: isLive ? 30 : 600,
-        maxBufferSize: 64 * 1024 * 1024,   // 64 MB RAM
-        maxBufferHole: 0.5,
-        highBufferWatchdogPeriod: 2,
-        nudgeMaxRetry: 10,
-
-        // ===== ABR – دائماً أعلى جودة وسرعة استجابة =====
-        startLevel: -1,
-        abrEwmaDefaultEstimate: 50 * 1024 * 1024,    // 50 Mbps
-        abrBandWidthFactor: 0.95,
-        abrBandWidthUpFactor: 0.90,
-        abrMaxWithRealBitrate: true,
-
-        // ===== أداء قوي جداً =====
+        // Buffer آمن جداً لمنع تحميل السيرفر فوق طاقته
+        maxBufferLength: isLive ? 10 : 60,
+        maxMaxBufferLength: isLive ? 20 : 120,
+        maxBufferSize: 60 * 1024 * 1024,
+        
+        // أداء
         enableWorker: true,
-        progressive: true,
         lowLatencyMode: isLive,
-        backBufferLength: isLive ? 10 : 90,
-        maxFragLookUpTolerance: 0.2,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 10,
 
-        // ===== تفادي خطأ ERR_CONTENT_LENGTH_MISMATCH =====
-        enableFetch: false, // إجبار استخدام XHR لأنه يتجاهل أخطاء الطول الوهمية من سيرفرات IPTV
+        // Retry مستقر
+        manifestLoadingMaxRetry: 5,
+        manifestLoadingRetryDelay: 1000,
+        levelLoadingMaxRetry: 5,
+        levelLoadingRetryDelay: 1000,
+        fragLoadingMaxRetry: 10,
+        fragLoadingRetryDelay: 1000,
 
-        // ===== Retry عنيف جداً لتعويض انقطاع السيرفر =====
-        manifestLoadingTimeOut: 10000,
-        manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 500,
-        levelLoadingTimeOut: 10000,
-        levelLoadingMaxRetry: 10,
-        levelLoadingRetryDelay: 500,
-        fragLoadingTimeOut: 20000,
-        fragLoadingMaxRetry: 15,
-        fragLoadingRetryDelay: 500,
-
-        // ===== CORS =====
+        // CORS
         xhrSetup(xhr) { xhr.withCredentials = false; }
     };
 }
@@ -119,15 +102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     api = new XtreamAPI();
     try {
         const d = await api.authenticate(autoUrl, autoUser, autoPass);
-        if (d.user_info) {
-            const max = parseInt(d.user_info.max_connections) || 0;
-            const active = parseInt(d.user_info.active_cons) || 0;
-            if (max > 0 && active >= max) {
-                setTimeout(() => {
-                    alert(`⚠️ تحذير: لقد وصلت للحد الأقصى للأجهزة المتصلة (${active}/${max}).\nالسيرفر قد يمنع البث! يرجى إغلاق التطبيق من أجهزتك الأخرى فوراً ليعمل التطبيق بثبات.`);
-                }, 1000);
-            }
-        }
+        // تم إزالة التنبيه بناءً على طلب المستخدم
     } catch(e) {}
     
     localStorage.setItem('iptv_session', JSON.stringify({ url: autoUrl, username: autoUser, password: autoPass }));
@@ -479,9 +454,8 @@ function playWithHlsJS(video, url, isLive) {
         if (bw > 0) updateBandwidthDisplay(bw);
     });
 
-    // ===== Auto-Reconnect المخفي السريع =====
-    let errCnt = 0, mediaErrCnt = 0;
-    const errorHandler = (_, d) => {
+    let errCnt = 0;
+    hlsInstance.on(Hls.Events.ERROR, (_, d) => {
         if (!d.fatal) {
             if (d.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
                 d.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL) {
@@ -490,45 +464,22 @@ function playWithHlsJS(video, url, isLive) {
             return;
         }
         
+        console.warn('HLS Fatal Error:', d.type, d.details);
+        errCnt++;
+        
         if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            if (d.details === Hls.ErrorDetails.FRAG_LOAD_ERROR || d.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT) {
-                // خطأ في جزء من الفيديو (شائع جداً في البث المباشر)، نحاول جلبه مجدداً بدون تدمير المشغل
-                console.warn("Fragment error, retrying...");
-                hlsInstance.startLoad();
+            if (errCnt <= 10) {
+                setTimeout(() => hlsInstance?.startLoad(), 500);
             } else {
-                console.warn("السيرفر قطع الاتصال بشكل كامل! جاري إعادة الاتصال السريع المخفي...");
-                const currentTime = video.currentTime;
-                
-                // إعادة بناء المشغل في الخلفية في أجزاء من الثانية
-                setTimeout(() => {
-                    if(!dom.playerScreen.classList.contains('active')) return;
-                    if(hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-                    
-                    hlsInstance = new Hls(getHlsConfig(isLive));
-                    hlsInstance.loadSource(url);
-                    hlsInstance.attachMedia(video);
-                    
-                    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-                        if (currentTime > 0 && !isLive) video.currentTime = currentTime;
-                        safePlay(video);
-                    });
-                    hlsInstance.on(Hls.Events.ERROR, errorHandler);
-                    
-                    hlsInstance.on(Hls.Events.FRAG_LOADED, () => {
-                        const bw = hlsInstance.bandwidthEstimate;
-                        if (bw > 0) updateBandwidthDisplay(bw);
-                    });
-                }, 300);
+                setTimeout(() => dom.playerScreen.classList.contains('active') && triggerPlayer(), 2000);
             }
         } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            mediaErrCnt++;
-            if (mediaErrCnt <= 3) { hlsInstance.recoverMediaError(); }
+            if (errCnt <= 5) { hlsInstance.recoverMediaError(); }
             else { setTimeout(() => checkAndHandleHEVC(video, url), 1500); }
         } else {
             setTimeout(() => dom.playerScreen.classList.contains('active') && triggerPlayer(), 2000);
         }
-    };
-    hlsInstance.on(Hls.Events.ERROR, errorHandler);
+    });
 
     // كاشف شاشة سوداء بعد 4 ثوان
     setTimeout(() => checkAndHandleHEVC(video, url), 4000);
